@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import calendar
 import os
+import streamlit.components.v1 as components
 
 # --- 1. PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -12,19 +12,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Advanced Institutional CSS & Print Media Queries
 st.markdown("""
     <style>
         * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        .block-container { padding-top: 2rem; padding-bottom: 3rem; }
-        h1 { font-size: 2.2rem; color: #1d1d1f; margin-bottom: 0.2rem; font-weight: 700; }
+        .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1400px;}
+        h1 { font-size: 2.2rem; color: #1d1d1f; margin-bottom: 0.2rem; font-weight: 700; letter-spacing: -0.02em;}
         h2 { font-size: 1.3rem; color: #1d1d1f; margin-top: 2rem; border-bottom: 1px solid #d2d2d7; padding-bottom: 0.3rem; font-weight: 600;}
         h3 { font-size: 1.1rem; color: #86868b; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 1rem; }
         p { color: #515154; font-size: 1.05rem; line-height: 1.6; text-align: justify; }
         .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.95rem; }
-        .info-table th { text-align: left; padding: 8px; border-bottom: 1px solid #e5e5ea; color: #86868b; font-weight: 500; width: 60%; }
-        .info-table td { text-align: right; padding: 8px; border-bottom: 1px solid #e5e5ea; color: #1d1d1f; font-weight: 600; }
+        .info-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #86868b; font-weight: 500; width: 60%; }
+        .info-table td { text-align: right; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #1d1d1f; font-weight: 600; }
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
+        
+        /* Native PDF Formatting (Triggered via Ctrl+P or the Print Button) */
+        @media print {
+            section[data-testid="stSidebar"] { display: none !important; }
+            header[data-testid="stHeader"] { display: none !important; }
+            .stDownloadButton, .print-btn-container { display: none !important; }
+            .block-container { max-width: 100% !important; padding: 0 !important; }
+            h1, h2, h3, p, td, th { color: #000 !important; }
+            @page { margin: 1cm; size: A4 portrait; }
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -35,18 +46,14 @@ DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
 
 # --- 3. CORE LOGIC & METRICS ---
 @st.cache_data
-def load_and_clean_data(filename: str, uploaded_file=None):
+def load_data(filename: str):
+    if not os.path.exists(filename):
+        return None
     try:
-        if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-        elif os.path.exists(filename):
-            df = pd.read_csv(filename)
-        else:
-            return None
+        df = pd.read_csv(filename)
         df['Date'] = pd.to_datetime(df['Date'])
         return df.sort_values('Date').reset_index(drop=True)
-    except Exception as e:
-        st.error(f"Error reading data: {e}")
+    except Exception:
         return None
 
 def calculate_kpis(df: pd.DataFrame):
@@ -56,53 +63,45 @@ def calculate_kpis(df: pd.DataFrame):
     daily['Cumulative_PNL'] = daily['PNL'].cumsum()
     daily['NAV'] = INITIAL_INVESTMENT + daily['Cumulative_PNL']
     
-    # Cumulative Percentage Return (for charting)
     daily['Strat_Cum_Ret'] = (daily['Cumulative_PNL'] / INITIAL_INVESTMENT) * 100
     daily['Bench_Cum_Ret'] = ((1 + DAILY_BENCHMARK_RATE) ** np.arange(1, len(daily) + 1) - 1) * 100
     
-    # Monthly Data for Hit Rate
     daily['YearMonth'] = daily['Date'].dt.to_period('M')
     monthly_returns = daily.groupby('YearMonth')['PNL'].sum()
-    positive_months = (monthly_returns > 0).sum()
-    negative_months = (monthly_returns < 0).sum()
+    pos_months = (monthly_returns > 0).sum()
+    neg_months = (monthly_returns < 0).sum()
     
-    # Advanced Metrics
     total_ret = daily['Strat_Cum_Ret'].iloc[-1] if not daily.empty else 0
     bench_ret = daily['Bench_Cum_Ret'].iloc[-1] if not daily.empty else 0
-    pct_of_benchmark = (total_ret / bench_ret) * 100 if bench_ret != 0 else 0
+    pct_bench = (total_ret / bench_ret) * 100 if bench_ret != 0 else 0
     
     rolling_max = daily['NAV'].cummax()
     drawdown = ((daily['NAV'] - rolling_max) / rolling_max) * 100
-    max_drawdown = drawdown.min()
+    max_dd = drawdown.min()
     
-    max_month_ret = (monthly_returns.max() / INITIAL_INVESTMENT) * 100 if not monthly_returns.empty else 0
-    min_month_ret = (monthly_returns.min() / INITIAL_INVESTMENT) * 100 if not monthly_returns.empty else 0
+    max_m_ret = (monthly_returns.max() / INITIAL_INVESTMENT) * 100 if not monthly_returns.empty else 0
+    min_m_ret = (monthly_returns.min() / INITIAL_INVESTMENT) * 100 if not monthly_returns.empty else 0
 
-    return daily, total_ret, pct_of_benchmark, positive_months, negative_months, max_drawdown, max_month_ret, min_month_ret
+    return daily, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret
 
 def build_prospectus_chart(daily_df: pd.DataFrame, strategy_name: str):
     fig = go.Figure()
-    
-    # Benchmark Curve
     fig.add_trace(go.Scatter(
         x=daily_df['Date'], y=daily_df['Bench_Cum_Ret'],
-        mode='lines', name='Benchmark (CDI Proxy)',
-        line=dict(color='#1c3c54', width=2)
+        mode='lines', name='Benchmark (10% a.a.)',
+        line=dict(color='#86868b', width=2, dash='dot')
     ))
-
-    # Strategy Curve
     fig.add_trace(go.Scatter(
         x=daily_df['Date'], y=daily_df['Strat_Cum_Ret'],
         mode='lines', name=strategy_name,
-        line=dict(color='#0088cc', width=2), 
-        fill='tonexty', fillcolor='rgba(0, 136, 204, 0.1)',
+        line=dict(color='#0071e3', width=2.5), 
+        fill='tonexty', fillcolor='rgba(0, 113, 227, 0.08)',
         hovertemplate="<b>%{x|%b %d, %Y}</b><br>Return: %{y:.2f}%<extra></extra>"
     ))
-
     fig.update_layout(
         plot_bgcolor='#ffffff', paper_bgcolor='#ffffff',
         margin=dict(l=0, r=0, t=10, b=0),
-        height=400, hovermode='x unified',
+        height=420, hovermode='x unified',
         yaxis_title="Cumulative Return (%)",
         xaxis=dict(showgrid=False, linecolor='#d2d2d7'),
         yaxis=dict(showgrid=True, gridcolor='#f5f5f7', linecolor='#d2d2d7', ticksuffix="%"),
@@ -130,13 +129,12 @@ def generate_bulletproof_matrix(daily_df: pd.DataFrame):
     pivot_table = pivot_table[list(months_map.values())]
     pivot_table['YTD'] = pivot_table.sum(axis=1)
     
-    # Format natively as strings to avoid Pandas Styler attribute errors
     for col in pivot_table.columns:
         pivot_table[col] = pivot_table[col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
         
     return pivot_table.reset_index()
 
-# --- 4. STRATEGY CONTENT DICTIONARY ---
+# --- 4. STRATEGY DICTIONARY ---
 STRATEGIES = {
     "Olho Diário": {
         "file": "olho_logbook.csv",
@@ -168,83 +166,97 @@ STRATEGIES = {
     }
 }
 
-# --- 5. SIDEBAR & FILE LOADING ---
+# --- 5. SIDEBAR NAVIGATION ---
 with st.sidebar:
     st.markdown("## LAM CAPITAL")
     st.markdown("<p style='color:#86868b; font-size: 0.9rem; margin-top:-10px;'>Quantitative Asset Management</p>", unsafe_allow_html=True)
     st.markdown("---")
     
-    selected_strategy = st.radio("Select Strategy Factsheet:", options=list(STRATEGIES.keys()))
+    selected_strategy = st.radio("Select Portfolio Factsheet:", options=list(STRATEGIES.keys()))
     strat_meta = STRATEGIES[selected_strategy]
     expected_filename = strat_meta["file"]
     
     st.markdown("---")
-    uploaded_file = st.file_uploader(f"Upload {expected_filename} to sync data:", type=['csv'])
+    st.markdown("<small style='color:#86868b;'>CONFIDENTIAL PROSPECTUS</small>", unsafe_allow_html=True)
 
-# --- 6. MAIN FACTSHEET BODY ---
-raw_df = load_and_clean_data(expected_filename, uploaded_file)
+# --- 6. DATA SYNCHRONIZATION CHECK ---
+raw_df = load_data(expected_filename)
 
 if raw_df is None:
-    st.warning(f"⚠️ **Waiting for Data:** Please upload **{expected_filename}** via the sidebar to generate the factsheet.")
+    st.info(f"**System Notice:** The execution ledger for `{selected_strategy}` is currently synchronizing or unavailable. Please ensure `{expected_filename}` is present in the deployment repository.", icon="ℹ️")
     st.stop()
 
 daily_df, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret = calculate_kpis(raw_df)
 
-# HEADER & ACTION BUTTONS
-col_title, col_actions = st.columns([2, 1.5])
+# --- 7. MAIN FACTSHEET BODY ---
+col_title, col_actions = st.columns([2.5, 1])
+
 with col_title:
     st.markdown(f"<h1>{selected_strategy}</h1>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='margin-top:-5px;'>{strat_meta['type']}</h3>", unsafe_allow_html=True)
-with col_actions:
-    st.write("") # Spacing
-    btn_col1, btn_col2 = st.columns(2)
-    with btn_col1:
-        st.download_button(
-            label="📄 Download Factsheet (PDF)",
-            data=b"Simulated PDF Content - Please generate via browser print to PDF", 
-            file_name=f"LAM_Capital_{selected_strategy.replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-    with btn_col2:
-        csv_bytes = raw_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="⬇️ Download Logbook (.csv)",
-            data=csv_bytes,
-            file_name=expected_filename,
-            mime="text/csv",
-            use_container_width=True
-        )
 
-# SUMMARY TEXT
+with col_actions:
+    st.write("") 
+    # Action 1: Export CSV
+    csv_bytes = raw_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Export Ledger (.csv)",
+        data=csv_bytes,
+        file_name=expected_filename,
+        mime="text/csv",
+        use_container_width=True
+    )
+    # Action 2: Trigger Native Print-to-PDF Dialog
+    components.html(
+        """
+        <button onclick="window.parent.print()" style="
+            width: 100%; 
+            padding: 0.5rem 1rem; 
+            background-color: #1c3c54; 
+            color: white; 
+            border: none; 
+            border-radius: 4px; 
+            font-family: sans-serif; 
+            font-size: 1rem; 
+            cursor: pointer;
+            transition: background-color 0.2s;">
+            🖨️ Print to PDF
+        </button>
+        """, 
+        height=50
+    )
+
+st.markdown("---")
+
+# Strategy Narrative
 paragraphs = strat_meta["desc"].split("\n\n")
 for p in paragraphs:
     st.markdown(f"<p>{p}</p>", unsafe_allow_html=True)
 
-# CHART
-st.markdown("<h2>Cumulative Performance</h2>", unsafe_allow_html=True)
+# Performance Chart
+st.markdown("<h2>Cumulative Performance Evolution</h2>", unsafe_allow_html=True)
 chart = build_prospectus_chart(daily_df, selected_strategy)
-st.plotly_chart(chart, use_container_width=True)
+st.plotly_chart(chart, use_container_width=True, config={'displayModeBar': False})
 
-# MATRIX
+# Return Matrix
 st.markdown("<h2>Monthly Return Matrix</h2>", unsafe_allow_html=True)
 matrix = generate_bulletproof_matrix(daily_df)
 st.dataframe(matrix, use_container_width=True, hide_index=True)
 
-# PROSPECTUS DETAILS (2 Columns mimicking the PDF)
+# Institutional Details
 col1, col_space, col2 = st.columns([1, 0.1, 1])
 
 with col1:
-    st.markdown("<h2>Risk & Performance Analysis</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>Risk & Performance Metrics</h2>", unsafe_allow_html=True)
     st.markdown(f"""
     <table class="info-table">
         <tr><th>Return Since Inception</th><td>{total_ret:.2f}%</td></tr>
-        <tr><th>Return Since Inception (% Benchmark)</th><td>{pct_bench:.2f}%</td></tr>
+        <tr><th>Return (% Benchmark)</th><td>{pct_bench:.2f}%</td></tr>
         <tr><th>Positive Months</th><td>{pos_months}</td></tr>
         <tr><th>Negative Months</th><td>{neg_months}</td></tr>
         <tr><th>Maximum Drawdown</th><td>{max_dd:.2f}%</td></tr>
-        <tr><th>Max Monthly Return</th><td>{max_m_ret:.2f}%</td></tr>
-        <tr><th>Min Monthly Return</th><td>{min_m_ret:.2f}%</td></tr>
+        <tr><th>Best Monthly Return</th><td>{max_m_ret:.2f}%</td></tr>
+        <tr><th>Worst Monthly Return</th><td>{min_m_ret:.2f}%</td></tr>
     </table>
     """, unsafe_allow_html=True)
 
@@ -255,11 +267,12 @@ with col2:
     <table class="info-table">
         <tr><th>Inception Date</th><td>{start_date}</td></tr>
         <tr><th>Target Audience</th><td>{strat_meta['audience']}</td></tr>
-        <tr><th>Fees</th><td>{strat_meta['fee']}</td></tr>
+        <tr><th>Management & Perf. Fee</th><td>{strat_meta['fee']}</td></tr>
         <tr><th>Redemption Liquidity</th><td>T+30</td></tr>
-        <tr><th>Initial Minimum Allocation</th><td>$ 1,000,000</td></tr>
+        <tr><th>Minimum Allocation</th><td>$ 1,000,000</td></tr>
+        <tr><th>Capital Mandate</th><td>Absolute Return</td></tr>
     </table>
     """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='font-size:0.8rem; color:#86868b; text-align:center;'>This material is for informational purposes only and does not constitute investment advice. Past performance is not indicative of future results.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:0.8rem; color:#86868b; text-align:center;'>This material is strictly for informational purposes and does not constitute an offer to sell or a solicitation to buy any securities. Past performance is not indicative of future results.</p>", unsafe_allow_html=True)
