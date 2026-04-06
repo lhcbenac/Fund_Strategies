@@ -41,7 +41,7 @@ st.markdown("""
 
 # --- 2. GLOBAL CONSTANTS ---
 INITIAL_INVESTMENT = 1000000.0  
-ANNUAL_BENCHMARK_RATE = 0.10  # 10% Annual Benchmark
+ANNUAL_BENCHMARK_RATE = 0.15  # 15% Annual Benchmark
 DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
 
 # --- 3. CORE LOGIC & METRICS ---
@@ -82,11 +82,13 @@ def preprocess_strategy_df(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame
     Strategy‑specific adjustments.
 
     For 'Olho Diário':
-      - Assume PNL column is in cents.
-      - Compute lot size rounded to nearest 100 shares.
-      - Compute cash PNL = PNL_cents * lot_size.
+      - PNL column is in cents per share.
+      - Use Gatilho as entry price.
+      - Position per entry = 50k BRL.
+      - Lot size rounded to nearest 100 shares.
+      - Cash PNL = PNL_per_share * lot_size.
     For others:
-      - Assume PNL already in cash; keep as-is.
+      - Assume PNL already in cash.
     """
     df = df.copy()
 
@@ -95,28 +97,41 @@ def preprocess_strategy_df(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame
         return df
 
     if strategy_name == "Olho Diário":
-        # Use Gatilho as entry price for lot size and PNL calc
+        # Use Gatilho as entry price
         price_col_candidates = ['Gatilho', 'Close_D0', 'Close']
         price_col = next((c for c in price_col_candidates if c in df.columns), None)
 
         if price_col is None:
-            # If we don't find a price column, we can't compute lot size; just convert cents to cash PNL.
-            df['PNL_cash'] = df['PNL'] / 100.0
-            df['PNL'] = df['PNL_cash']
+            # Fallback: convert PNL from cents to cash but cannot size by price
+            df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce') / 100.0
+            df = df.dropna(subset=['PNL'])
+            return df
+
+        # Force numeric types
+        df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce')
+        df[price_col] = pd.to_numeric(df[price_col], errors='coerce')
+
+        # Drop rows where price or PNL is invalid or non-positive
+        df = df.dropna(subset=['PNL', price_col])
+        df = df[df[price_col] > 0]
+
+        if df.empty:
             return df
 
         # Convert PNL from cents to cash (per share)
         df['PNL_per_share'] = df['PNL'] / 100.0
 
-        # Position per entry is fixed 50k BRL as per your example
+        # Position per entry is fixed 50k BRL
         POSITION_VALUE = 50000.0
 
         # Compute raw share quantity = position value / price
         df['raw_qty'] = POSITION_VALUE / df[price_col]
 
         # Round quantity to nearest multiple of 100 (Brazil lot)
-        # Example: 9900.3 -> 9900; 9870 -> 9900, etc. Adjust rounding rule if you prefer floor.
         df['lot_size'] = (df['raw_qty'] / 100).round().astype(int) * 100
+
+        # Ensure lot_size is at least 100 (avoid 0 lots)
+        df.loc[df['lot_size'] <= 0, 'lot_size'] = 100
 
         # Cash PNL = PNL_per_share * lot_size
         df['PNL_cash'] = df['PNL_per_share'] * df['lot_size']
@@ -124,12 +139,13 @@ def preprocess_strategy_df(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame
         # Use cash PNL as the main PNL the rest of the app sees
         df['PNL'] = df['PNL_cash']
 
-        # Drop helper columns if you don't want them later
+        # Clean helper columns if you want
         df = df.drop(columns=['PNL_per_share', 'raw_qty'], errors='ignore')
 
     else:
-        # Other strategies: assume PNL already in cash
-        df['PNL'] = df['PNL']
+        # Other strategies: ensure PNL is numeric and treat as cash
+        df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce')
+        df = df.dropna(subset=['PNL'])
 
     return df
 
@@ -264,11 +280,23 @@ with st.sidebar:
 raw_df = load_data(expected_filename)
 
 if raw_df is None or raw_df.empty:
-    st.info(f"**System Notice:** The execution ledger for `{selected_strategy}` is currently synchronizing or unavailable. Please ensure `{expected_filename}` is present in the deployment repository and contains a valid date column.", icon="ℹ️")
+    st.info(
+        f"**System Notice:** The execution ledger for `{selected_strategy}` is currently synchronizing or unavailable. "
+        f"Please ensure `{expected_filename}` is present in the deployment repository and contains a valid date column.",
+        icon="ℹ️"
+    )
     st.stop()
 
-# Apply strategy‑specific transformations (Olho cents -> cash, lot size, etc.)
+# Apply strategy‑specific transformations
 proc_df = preprocess_strategy_df(raw_df, selected_strategy)
+
+if proc_df is None or proc_df.empty:
+    st.info(
+        f"**System Notice:** After processing, there are no valid records for `{selected_strategy}` "
+        f"(check `PNL` and `Gatilho` columns).",
+        icon="ℹ️"
+    )
+    st.stop()
 
 daily_df, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret = calculate_kpis(proc_df)
 
@@ -281,7 +309,7 @@ with col_title:
 
 with col_actions:
     st.write("") 
-    # Action 1: Export CSV (export processed ledger so PNL is cash-consistent)
+    # Action 1: Export CSV (processed ledger so PNL is cash-consistent)
     csv_bytes = proc_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="⬇️ Export Ledger (.csv)",
