@@ -1,4 +1,4 @@
-﻿ticker;entry_date;exit_date;tranches_deployed;vwap_entry;exit_price;pnl;return_pct
+﻿ticker;Entry_Date;exit_date;tranches_deployed;vwap_entry;exit_price;PNL;return_pct
 BRAV3;2023-10-09 00:00:00;2023-10-13 00:00:00;1;29,5;32;1694,92;8,47
 ENGI11;2023-10-09 00:00:00;2023-10-24 00:00:00;1;35,05;37,63;1472,18;7,36
 EQTL3;2023-10-19 00:00:00;2023-10-24 00:00:00;1;27,71;29,32;1160,68;5,81
