@@ -81,66 +81,18 @@ def load_csv(filename: str) -> pd.DataFrame | None:
 # =====================
 # 4. STRATEGY PREPROCESSING
 # =====================
+# =====================
+# 4. GENERIC PREPROCESSING (ALL STRATEGIES)
+# =====================
 
-def preprocess_olho(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Olho Diário:
-      - PNL is in cents per share.
-      - Gatilho is entry price.
-      - Fixed 50k BRL per trade.
-      - Lot size rounded to nearest 100.
-      - Output PNL in cash.
-    """
-    df = df.copy()
-
-    if "PNL" not in df.columns or "Gatilho" not in df.columns:
-        return df
-
-    # To numeric
-    df["PNL"] = pd.to_numeric(df["PNL"], errors="coerce")
-    df["Gatilho"] = pd.to_numeric(df["Gatilho"], errors="coerce")
-
-    df = df.dropna(subset=["PNL", "Gatilho"])
-    df = df[df["Gatilho"] > 0]
-
-    if df.empty:
-        return df
-
-    # PNL per share in BRL
-    df["PNL_per_share"] = df["PNL"] / 100.0
-
-    # Raw quantity and lot size (nearest 100)
-    df["raw_qty"] = OLHO_POSITION_VALUE / df["Gatilho"]
-    df["lot_size"] = (df["raw_qty"] / 100).round().astype(int) * 100
-    df.loc[df["lot_size"] <= 0, "lot_size"] = 100
-
-    # Cash PNL
-    df["PNL_cash"] = df["PNL_per_share"] * df["lot_size"]
-
-    # Replace PNL column with cash PNL for the rest of the app
-    df["PNL"] = df["PNL_cash"]
-
-    # Optional: drop helper columns
-    df = df.drop(columns=["PNL_per_share", "raw_qty"], errors="ignore")
-
-    return df
-
-
-def preprocess_generic(df: pd.DataFrame) -> pd.DataFrame:
-    """Other strategies: assume PNL already in cash."""
+def preprocess_all(df: pd.DataFrame) -> pd.DataFrame:
+    """All strategies: assume PNL is already in cash."""
     df = df.copy()
     if "PNL" not in df.columns:
         return df
     df["PNL"] = pd.to_numeric(df["PNL"], errors="coerce")
     df = df.dropna(subset=["PNL"])
     return df
-
-
-def preprocess_by_strategy(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame:
-    if strategy_name == "Olho Diário":
-        return preprocess_olho(df)
-    else:
-        return preprocess_generic(df)
 
 # =====================
 # 5. KPI & CHART LOGIC
