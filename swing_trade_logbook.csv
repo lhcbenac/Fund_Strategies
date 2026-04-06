@@ -1,4 +1,4 @@
-﻿Ativo;Estrategia;Original_Signal;Executed_Dir;Entry_Date;Exit_Date;Entry_Price;Exit_Price;Hold_Days;Exit_Reason;Metric;PnL_R$;Return_%
+﻿Ativo;Estrategia;Original_Signal;Executed_Dir;Entry_Date;Exit_Date;Entry_Price;Exit_Price;Hold_Days;Exit_Reason;Metric;PnL;Return_%
 AALR3;OU_MR;Buy;Sell;2025-03-27;2025-03-27;10,26;8,98;1;Take Profit;HL:11.2;6237,82;12,48
 VAMO3;OU_MR;Sell;Buy;2025-03-27;2025-03-28;5,06;4,55;2;Stop Loss;HL:5.2;-5039,53;-10,08
 GFSA3;OU_MR;Sell;Buy;2025-03-28;2025-03-28;34,82;39,15;1;Take Profit;HL:3.4;6217,69;12,44
