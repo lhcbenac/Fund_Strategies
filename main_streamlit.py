@@ -61,7 +61,6 @@ def load_csv(filename: str) -> pd.DataFrame | None:
         df = pd.read_csv(filename)
         df.columns = df.columns.str.strip()
         
-        # Date column detection
         date_candidates = ["Date", "Loop_Date", "Trade_Date", "date"]
         date_col = next((c for c in date_candidates if c in df.columns), None)
         
@@ -69,6 +68,8 @@ def load_csv(filename: str) -> pd.DataFrame | None:
             df = df.rename(columns={date_col: "Date"})
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
             df = df.dropna(subset=["Date"])
+            # Ensure PNL is numeric and handle case where it might be empty
+            df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce').fillna(0)
             return df.sort_values("Date").reset_index(drop=True)
         return None
     except:
@@ -79,24 +80,20 @@ def load_csv(filename: str) -> pd.DataFrame | None:
 # =====================
 
 def calculate_kpis(df: pd.DataFrame):
-    # Group PNL by date ensuring it stays as float cash
-    df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce').fillna(0)
+    # Aggregating all trades per day (crucial for Market Neutral 5/5)
     daily = df.groupby(df["Date"].dt.normalize())["PNL"].sum().reset_index()
-    
-    # Ensure Date is datetime for Plotly
     daily["Date"] = pd.to_datetime(daily["Date"])
 
     daily["Cumulative_PNL"] = daily["PNL"].cumsum()
     daily["NAV"] = INITIAL_INVESTMENT + daily["Cumulative_PNL"]
 
-    # Calculate returns relative to the 1M investment
+    # Strat Return based on total daily PnL
     daily["Strat_Cum_Ret"] = (daily["Cumulative_PNL"] / INITIAL_INVESTMENT) * 100
     
-    # Benchmark indexing
+    # Benchmark calc
     days = np.arange(1, len(daily) + 1)
     daily["Bench_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days - 1) * 100
 
-    # Monthly stats
     daily["YearMonth"] = daily["Date"].dt.to_period("M")
     monthly_pnl = daily.groupby("YearMonth")["PNL"].sum()
     
@@ -136,11 +133,10 @@ def build_prospectus_chart(daily_df: pd.DataFrame, strategy_name: str):
 
 def generate_monthly_matrix(daily_df: pd.DataFrame):
     df = daily_df.copy()
-    df["Year"] = df["Date"].dt.year
-    df["Month"] = df["Date"].dt.month
+    df['Year'] = df['Date'].dt.year
+    df['Month'] = df['Date'].dt.month
     
     pivot = (df.groupby(["Year", "Month"])["PNL"].sum() / INITIAL_INVESTMENT * 100).unstack()
-    
     months = {i: calendar.month_name[i][:3] for i in range(1, 13)}
     pivot = pivot.rename(columns=months)
     
@@ -161,28 +157,36 @@ STRATEGIES = {
         "type": "Intraday Quantitative Equity Portfolio",
         "audience": "Qualified Investors",
         "fee": "2.00% p.a. | 20% > Benchmark",
-        "desc": "The Olho Diário strategy is a sophisticated intraday quantitative equity portfolio engineered to isolate and capitalize on immediate market momentum, gap imbalances, and structural price reversals.\n\nBy ensuring all positions are opened and closed within the same trading session, the portfolio maintains zero overnight exposure. This structural mandate acts as a powerful shield against macroeconomic shocks and unpredictable overnight gap risks."
+        "desc": """The Olho Diário strategy is a sophisticated intraday quantitative equity portfolio engineered to isolate and capitalize on immediate market momentum, gap imbalances, and structural price reversals. At its core, this framework was developed to introduce high predictability into intraday trading by leveraging mathematical patterns established in preceding market sessions. Unlike traditional models that rely on static technical indicators, the Olho Diário engine dynamically develops a daily targeted portfolio consisting of the 20 highest-probability equities in the Brazilian market. To achieve this, the algorithm subjects each asset to a rigorous stress test, simulating over 2,000 unique scenarios daily. It continuously retrains its model using OHLC (Open, High, Low, Close) data and current-day opening auction values to identify forward-looking, highly profitable entry routes.
+
+A defining characteristic of this strategy is its strict adherence to intraday execution. By ensuring that all positions are opened and closed within the same trading session, the portfolio maintains zero overnight exposure. This structural mandate acts as a powerful shield against macroeconomic shocks and unpredictable overnight gap risks. Furthermore, capital allocation is highly distributed across the selected assets, preventing concentration risk and ensuring that no single market cycle can fracture the strategy's foundation. Because the system is retrained daily, it possesses an exceptional capacity to pivot and adapt to shifting market regimes. This flexibility makes Olho Diário a versatile, adaptive solution for investors, providing consistent alpha generation and resilience in the face of high market volatility."""
     },
     "Quantitative Alpha - B3": {
         "file": "market_neutral_logbook.csv",
         "type": "Intraday Market-Neutral Statistical Arbitrage",
         "audience": "Professional Investors",
         "fee": "2.00% p.a. | 20% > Benchmark",
-        "desc": "Quantitative Alpha - B3 is an institutional-grade, market-neutral statistical arbitrage framework engineered to exploit behavioral overreactions following the market open.\n\nUsing Volatility-Adjusted Z-Scores, the system identifies extreme panic or euphoria gaps and builds a balanced long/short book to capture intraday mean-reversion with zero market beta."
+        "desc": """Quantitative Alpha - B3 is an institutional-grade, market-neutral statistical arbitrage strategy designed exclusively to exploit behavioral overreactions during the highly volatile market open. Moving away from traditional technical analysis or directional betting, this model relies entirely on Volatility-Adjusted Relative Extremes. The algorithm precisely isolates the overnight price action—the gap between the previous day's close and the current day's open—across the entire IBOV universe. It then divides this raw gap by each specific stock's 20-day historical standard deviation. This critical normalization process converts a simple percentage gap into a rigorous statistical Z-Score, allowing the engine to measure exactly how abnormal a morning gap is relative to that specific asset's historical behavioral baseline.
+
+At exactly 10:00 AM, the algorithmic engine cross-sectionally ranks the analyzed universe based on these Z-Scores. It then constructs a perfectly balanced, market-neutral portfolio designed to act as a liquidity provider during early morning chaos. The system automatically executes long positions on the most severely suppressed gaps—fading morning retail panic—and simultaneously takes short positions on the most heavily inflated gaps, fading morning euphoria. By anchoring itself to both sides of the market evenly, the strategy entirely neutralizes broader market directional risk (Beta). The portfolio captures pure alpha through intraday mean-reversion as the targeted assets naturally gravitate back toward their fair value by the 4:00 PM market close. With strictly zero overnight exposure, Quantitative Alpha delivers a mathematically pure, non-directional return stream."""
     },
     "LAM Strategy": {
         "file": "lam_strategy_logbook.csv",
         "type": "Auto-Adaptive Multi-Model Swing Portfolio",
         "audience": "Qualified Investors",
         "fee": "2.00% p.a. | 20% > Benchmark",
-        "desc": "The flagship LAM Strategy is a highly advanced, auto-adaptive swing trading portfolio driven by a robust ensemble of seven distinct quantitative models.\n\nUtilizing the Hurst Exponent for regime detection and Ornstein-Uhlenbeck processes for half-life calculation, the strategy rotates capital across mean-reversion and volatility compression strategies."
+        "desc": """The flagship LAM Strategy is a highly advanced, auto-adaptive swing trading portfolio driven by a robust ensemble of seven distinct quantitative models. Designed to navigate and conquer complex, multi-day market cycles, the foundation of this strategy rests heavily on rigorous statistical mathematics rather than conventional charting. The primary engine utilizes the Hurst Exponent to continuously monitor and detect shifting market regimes—accurately distinguishing between trending (persistent) and mean-reverting (anti-persistent) environments. Concurrently, it applies Ornstein-Uhlenbeck processes to calculate mathematically optimal mean-reversion half-lives, dictating exactly how long a swing position should be held.
+
+Depending on the detected regime, the algorithmic framework dynamically rotates capital across its sub-strategies. These include models targeting extreme Volatility Compression (detecting quiet periods before explosive breakouts), Volume Climaxes (fading institutional exhaustion), adaptive Keltner Squeezes, and Anchored VWAP Divergences. Unlike our strictly intraday models, the LAM Strategy is designed to hold overnight exposure, capturing larger multi-day alpha. To mitigate the inherent risks of swing trading, the framework operates on a rigorous step-forward walking backtest architecture. Risk is managed asymmetrically via dynamic, volatility-adjusted Stop-Loss and Take-Profit brackets, alongside strict volume liquidity minimums to ensure seamless execution. Crucially, the engine features an institutional "Mirror Book" parameter. If macroeconomic headwinds dictate severe structural system decay, the algorithm can seamlessly invert its entire signal logic, allowing the portfolio to remain profitable even when traditional market conditions completely break down."""
     },
     "Swing Trade ATR": {
         "file": "swing_atr_logbook.csv",
         "type": "Systematic Scale-In Portfolio Matrix",
         "audience": "Qualified Investors",
         "fee": "1.50% p.a. | 20% > Benchmark",
-        "desc": "The Swing Trade ATR framework is an institutional-grade, multi-tranche scale-in engine engineered to build positions during extreme pricing anomalies.\n\nGuarded by ATR volatility bands and regime filters, the strategy calculates precise scale-in levels to capture aggressive reversion alpha while strictly defining downside risk."
+        "desc": """The Swing Trade ATR framework is an institutional-grade, multi-tranche scale-in engine engineered to systematically build positions during extreme pricing anomalies. At its core, the strategy is predicated on the mathematical certainty of mean reversion, utilizing a 20-day Exponential Weighted Moving Average (EWMA) as the fundamental baseline for fair value. Rather than executing a single, rigid entry, the portfolio manager module deploys capital across five calculated tranches, scaling into positions as an asset deviates further from its baseline. 
+
+To ensure mathematical precision, these scale-in levels are not arbitrary percentages; they are strictly guarded by Average True Range (ATR) volatility bands. As an asset drops 2.0, 3.0, 4.5, 6.0, and ultimately 8.0 ATR multiples below its EWMA, the engine progressively increases its capital allocation weighting. However, to prevent the system from blindly catching "falling knives" during structural market crashes, the strategy employs a rolling 60-day Hurst exponent as an absolute regime filter. If the Hurst calculation indicates a persistent downward trend (a value greater than 0.55), the scale-in logic is instantly aborted. The exit mechanism is equally systematic: the entire aggregate position is closed the moment the asset's price reverts to the rolling EWMA baseline. By combining dynamic volatility mapping, strict maximum gross exposure limits, and advanced regime detection, the Swing Trade ATR strategy offers a mathematically sound approach to capturing aggressive reversion alpha while strictly defining downside risk parameters."""
     },
 }
 
