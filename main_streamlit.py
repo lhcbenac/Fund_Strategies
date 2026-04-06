@@ -27,8 +27,6 @@ st.markdown("""
         .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.95rem; }
         .info-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #86868b; font-weight: 500; width: 60%; }
         .info-table td { text-align: right; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #1d1d1f; font-weight: 600; }
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
         
         @media print {
             section[data-testid="stSidebar"] { display: none !important; }
@@ -78,14 +76,16 @@ def load_csv(filename: str) -> pd.DataFrame | None:
 # =====================
 
 def calculate_kpis(df: pd.DataFrame):
+    # Group PNL by normalized date
     daily = df.groupby(df["Date"].dt.normalize())["PNL"].sum().reset_index()
     daily["Date"] = pd.to_datetime(daily["Date"])
     daily["Cumulative_PNL"] = daily["PNL"].cumsum()
     daily["NAV"] = INITIAL_INVESTMENT + daily["Cumulative_PNL"]
     daily["Strat_Cum_Ret"] = (daily["Cumulative_PNL"] / INITIAL_INVESTMENT) * 100
     
-    days = np.arange(1, len(daily) + 1)
-    daily["Bench_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days - 1) * 100
+    # Bench calc
+    days_range = np.arange(1, len(daily) + 1)
+    daily["Bench_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days_range - 1) * 100
     
     daily["YearMonth"] = daily["Date"].dt.to_period("M")
     monthly_pnl = daily.groupby("YearMonth")["PNL"].sum()
@@ -93,6 +93,7 @@ def calculate_kpis(df: pd.DataFrame):
     total_ret = float(daily["Strat_Cum_Ret"].iloc[-1]) if not daily.empty else 0.0
     bench_ret = float(daily["Bench_Cum_Ret"].iloc[-1]) if not daily.empty else 0.0
     pct_bench = (total_ret / bench_ret * 100) if bench_ret != 0 else 0.0
+    
     rolling_max = daily["NAV"].cummax()
     drawdown = (daily["NAV"] - rolling_max) / rolling_max * 100
     max_dd = float(drawdown.min()) if not drawdown.empty else 0.0
@@ -105,20 +106,17 @@ def generate_monthly_matrix(daily_df: pd.DataFrame):
     df['Month'] = df['Date'].dt.month
     
     pivot = (df.groupby(["Year", "Month"])["PNL"].sum() / INITIAL_INVESTMENT * 100).unstack()
-    months = {i: calendar.month_name[i][:3] for i in range(1, 13)}
-    pivot = pivot.rename(columns=months)
+    months_names = {i: calendar.month_name[i][:3] for i in range(1, 13)}
+    pivot = pivot.rename(columns=months_names)
     
-    for m in months.values():
+    for m in months_names.values():
         if m not in pivot.columns: pivot[m] = np.nan
             
-    pivot = pivot[list(months.values())]
+    pivot = pivot[list(months_names.values())]
     pivot["YTD"] = pivot.sum(axis=1)
     
-    # Replacement for applymap/map to ensure version compatibility
-    def format_pct(x):
-        return f"{x:.2f}%" if pd.notnull(x) else "-"
-        
-    return pivot.apply(lambda x: x.map(format_pct))
+    # Format and return styled table
+    return pivot.style.format("{:.2f}%", na_rep="-")
 
 # =====================
 # 5. STRATEGY METADATA
@@ -169,25 +167,27 @@ To ensure mathematical precision, these scale-in levels are strictly guarded by 
 
 with st.sidebar:
     st.markdown("## LAM CAPITAL")
+    st.markdown("<p style='color:#86868b; font-size: 0.9rem; margin-top:-10px;'>Quantitative Asset Management</p>", unsafe_allow_html=True)
+    st.markdown("---")
     selected_strategy = st.radio("Select Strategy:", options=list(STRATEGIES.keys()))
     strat_meta = STRATEGIES[selected_strategy]
 
 raw_df = load_csv(strat_meta["file"])
 
 if raw_df is None:
-    st.info(f"**System Notice:** Expected file `{strat_meta['file']}` not found.", icon="ℹ️")
+    st.info(f"**System Notice:** File `{strat_meta['file']}` not found.", icon="ℹ️")
     st.stop()
 
 daily_df, total_ret, pct_bench, pos_m, neg_m, max_dd, max_m, min_m = calculate_kpis(raw_df)
 
-# Header & Actions
+# Header
 col_t, col_a = st.columns([2.5, 1])
 with col_t:
     st.markdown(f"<h1>{selected_strategy}</h1>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='margin-top:-5px;'>{strat_meta['type']}</h3>", unsafe_allow_html=True)
 with col_a:
     st.write("")
-    st.download_button("⬇️ Export Ledger", raw_df.to_csv(index=False).encode("utf-8"), strat_meta["file"], "text/csv", use_container_width=True)
+    st.download_button("⬇️ Export Ledger (.csv)", raw_df.to_csv(index=False).encode("utf-8"), strat_meta["file"], "text/csv", use_container_width=True)
     components.html('<button onclick="window.parent.print()" style="width: 100%; padding: 0.5rem; background-color: #1c3c54; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer;">🖨️ Print to PDF</button>', height=50)
 
 st.markdown("---")
@@ -197,27 +197,30 @@ st.markdown(strat_meta["desc"])
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=daily_df["Date"], y=daily_df["Bench_Cum_Ret"], name="Benchmark", line=dict(color="#86868b", dash="dot")))
 fig.add_trace(go.Scatter(x=daily_df["Date"], y=daily_df["Strat_Cum_Ret"], name=selected_strategy, line=dict(color="#0071e3", width=3), fill="tonexty", fillcolor="rgba(0, 113, 227, 0.08)"))
-fig.update_layout(height=450, template="white", margin=dict(l=0,r=0,t=10,b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+fig.update_layout(height=450, template="plotly_white", margin=dict(l=0,r=0,t=10,b=0), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 # Matrix
 st.markdown("<h2>Monthly Return Matrix</h2>", unsafe_allow_html=True)
 st.dataframe(generate_monthly_matrix(daily_df), use_container_width=True)
 
-# Footer Metrics
-c1, _, c2 = st.columns([1, 0.1, 1])
-with c1:
+# Metrics
+col1, _, col2 = st.columns([1, 0.1, 1])
+with col1:
     st.markdown(f"""<h2>Risk & Performance Metrics</h2><table class="info-table">
         <tr><th>Return Since Inception</th><td>{total_ret:.2f}%</td></tr>
         <tr><th>Return (% Benchmark)</th><td>{pct_bench:.2f}%</td></tr>
-        <tr><th>Max Drawdown</th><td>{max_dd:.2f}%</td></tr>
-        <tr><th>Best Monthly Return</th><td>{max_m:.2f}%</td></tr>
+        <tr><th>Positive Months</th><td>{pos_m}</td></tr>
+        <tr><th>Maximum Drawdown</th><td>{max_dd:.2f}%</td></tr>
     </table>""", unsafe_allow_html=True)
 
-with c2:
+with col2:
     st.markdown(f"""<h2>General Information</h2><table class="info-table">
         <tr><th>Inception Date</th><td>{daily_df["Date"].iloc[0].strftime("%B %d, %Y")}</td></tr>
         <tr><th>Fees</th><td>{strat_meta['fee']}</td></tr>
         <tr><th>Redemption Liquidity</th><td>T+30</td></tr>
         <tr><th>Minimum Allocation</th><td>$ 1,000,000</td></tr>
     </table>""", unsafe_allow_html=True)
+
+st.markdown("---")
+st.markdown("<p style='font-size:0.8rem; color:#86868b; text-align:center;'>This material is for informational purposes only. Past performance is not indicative of future results.</p>", unsafe_allow_html=True)
