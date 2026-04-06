@@ -259,7 +259,9 @@ if raw_df is None or raw_df.empty:
     st.stop()
 
 proc_df = preprocess_all(raw_df)
-
+if selected_strategy == "Olho Diário":
+    st.write("Olho – first 10 rows used for KPIs:")
+    st.dataframe(proc_df[["Date", "PNL"]].head(10))
 if proc_df is None or proc_df.empty:
     st.info(
         f"**System Notice:** After processing, there are no valid trades for `{selected_strategy}`. "
