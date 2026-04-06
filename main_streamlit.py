@@ -27,8 +27,6 @@ st.markdown("""
         .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.95rem; }
         .info-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #86868b; font-weight: 500; width: 60%; }
         .info-table td { text-align: right; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #1d1d1f; font-weight: 600; }
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
         
         @media print {
             section[data-testid="stSidebar"] { display: none !important; }
@@ -50,7 +48,7 @@ ANNUAL_BENCHMARK_RATE = 0.10
 DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
 
 # =====================
-# 3. DATA LOADING
+# 3. DATA LOADING (UNIVERSAL ENGINE)
 # =====================
 
 @st.cache_data
@@ -58,19 +56,37 @@ def load_csv(filename: str) -> pd.DataFrame | None:
     if not os.path.exists(filename):
         return None
     try:
-        df = pd.read_csv(filename)
-        df.columns = df.columns.str.strip()
-        date_candidates = ["Date", "Loop_Date", "Trade_Date", "date"]
+        # Engine='python' and sep=None auto-detects commas vs semicolons
+        df = pd.read_csv(filename, sep=None, engine='python')
+        
+        # Clean BOM (Byte Order Mark) from CSV headers and strip whitespace
+        df.columns = df.columns.str.replace('\ufeff', '').str.strip()
+        
+        # Date column mapping
+        date_candidates = ["Date", "Loop_Date", "Trade_Date", "date", "Entry_Date"]
         date_col = next((c for c in date_candidates if c in df.columns), None)
         
         if date_col:
             df = df.rename(columns={date_col: "Date"})
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
             df = df.dropna(subset=["Date"])
+            
+            # PNL Column mapping (Handle PnL vs PNL)
+            if 'PnL' in df.columns and 'PNL' not in df.columns:
+                df = df.rename(columns={'PnL': 'PNL'})
+            
+            # Clean Brazilian Decimals (e.g., 1694,92 -> 1694.92)
+            if 'PNL' in df.columns and df['PNL'].dtype == 'object':
+                df['PNL'] = df['PNL'].astype(str).str.replace('.', '', regex=False)  # Remove thousands separators if any
+                df['PNL'] = df['PNL'].str.replace(',', '.', regex=False)            # Replace commas with dots
+            
+            # Ensure final float conversion
             df['PNL'] = pd.to_numeric(df['PNL'], errors='coerce').fillna(0)
+            
             return df.sort_values("Date").reset_index(drop=True)
         return None
-    except:
+    except Exception as e:
+        print(f"Error loading {filename}: {e}")
         return None
 
 # =====================
@@ -153,7 +169,7 @@ At exactly 10:00 AM, the algorithmic engine cross-sectionally ranks the analyzed
 To ensure mathematical precision, these scale-in levels are strictly guarded by Average True Range (ATR) volatility bands. As an asset drops 2.0, 3.0, 4.5, 6.0, and ultimately 8.0 ATR multiples below its EWMA, the engine progressively increases its capital allocation weighting. However, to prevent the system from blindly catching "falling knives" during structural market crashes, the strategy employs a rolling 60-day Hurst exponent as an absolute regime filter. If the Hurst calculation indicates a persistent downward trend (a value greater than 0.55), the scale-in logic is instantly aborted. The exit mechanism is equally systematic: the entire aggregate position is closed the moment the asset's price reverts to the rolling EWMA baseline. By combining dynamic volatility mapping, strict maximum gross exposure limits, and advanced regime detection, the LAM Strategy offers a mathematically sound approach to capturing aggressive reversion alpha while strictly defining downside risk parameters."""
     },
     "Swing Trade": {
-        "file": "swing_trade_logbook.csv",
+        "file": "swing_atr_logbook.csv",
         "type": "Auto-Adaptive Multi-Model Swing Portfolio",
         "audience": "Qualified Investors",
         "fee": "2.00% p.a. | 20% > Benchmark",
