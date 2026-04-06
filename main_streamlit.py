@@ -50,14 +50,26 @@ def load_data(filename: str):
         return None
     try:
         df = pd.read_csv(filename)
-        # Compatibility Layer: Map Loop_Date to Date automatically
-        if 'Loop_Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Loop_Date'])
-        elif 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date'])
-        else:
+
+        # Normalize column names (remove spaces, unify case if you want)
+        df.columns = df.columns.str.strip()
+
+        # Accept multiple possible date column names
+        date_candidates = ['Date', 'Loop_Date', 'Trade_Date', 'date']
+        date_col = next((c for c in date_candidates if c in df.columns), None)
+
+        if date_col is None:
+            # No usable date column found
             return None
-            
+
+        # Rename chosen date column to 'Date' so the rest of the code works unchanged
+        if date_col != 'Date':
+            df = df.rename(columns={date_col: 'Date'})
+
+        # Parse dates and clean
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+
         return df.sort_values('Date').reset_index(drop=True)
     except Exception:
         return None
