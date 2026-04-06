@@ -62,7 +62,6 @@ def load_data(filename: str):
         date_col = next((c for c in date_candidates if c in df.columns), None)
 
         if date_col is None:
-            # No usable date column found
             return None
 
         # Rename chosen date column to 'Date' so the rest of the code works unchanged
@@ -76,6 +75,64 @@ def load_data(filename: str):
         return df.sort_values('Date').reset_index(drop=True)
     except Exception:
         return None
+
+
+def preprocess_strategy_df(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame:
+    """
+    Strategy‑specific adjustments.
+
+    For 'Olho Diário':
+      - Assume PNL column is in cents.
+      - Compute lot size rounded to nearest 100 shares.
+      - Compute cash PNL = PNL_cents * lot_size.
+    For others:
+      - Assume PNL already in cash; keep as-is.
+    """
+    df = df.copy()
+
+    # Ensure we have a PNL column
+    if 'PNL' not in df.columns:
+        return df
+
+    if strategy_name == "Olho Diário":
+        # Optional: ensure there is a price column; adapt the name if needed.
+        # Here I assume a column named 'Price' (you can change to 'Close', 'Entry_Price', etc.).
+        price_col_candidates = ['Price', 'Close', 'Entry_Price', 'Loop_Price']
+        price_col = next((c for c in price_col_candidates if c in df.columns), None)
+
+        if price_col is None:
+            # If we don't find a price column, we can't compute lot size; just convert cents to cash PNL.
+            df['PNL_cash'] = df['PNL'] / 100.0
+            df['PNL'] = df['PNL_cash']
+            return df
+
+        # Convert PNL from cents to cash (per share)
+        df['PNL_per_share'] = df['PNL'] / 100.0
+
+        # Position per entry is fixed 50k BRL as per your example
+        POSITION_VALUE = 50000.0
+
+        # Compute raw share quantity = position value / price
+        df['raw_qty'] = POSITION_VALUE / df[price_col]
+
+        # Round quantity to nearest multiple of 100 (Brazil lot)
+        # Example: 9900.3 -> 9900; 9870 -> 9900, etc. Adjust rounding rule if you prefer floor.
+        df['lot_size'] = (df['raw_qty'] / 100).round().astype(int) * 100
+
+        # Cash PNL = PNL_per_share * lot_size
+        df['PNL_cash'] = df['PNL_per_share'] * df['lot_size']
+
+        # Use cash PNL as the main PNL the rest of the app sees
+        df['PNL'] = df['PNL_cash']
+
+        # Drop helper columns if you don't want them later
+        df = df.drop(columns=['PNL_per_share', 'raw_qty'], errors='ignore')
+
+    else:
+        # Other strategies: assume PNL already in cash
+        df['PNL'] = df['PNL']
+
+    return df
 
 
 def calculate_kpis(df: pd.DataFrame):
@@ -211,7 +268,10 @@ if raw_df is None or raw_df.empty:
     st.info(f"**System Notice:** The execution ledger for `{selected_strategy}` is currently synchronizing or unavailable. Please ensure `{expected_filename}` is present in the deployment repository and contains a valid date column.", icon="ℹ️")
     st.stop()
 
-daily_df, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret = calculate_kpis(raw_df)
+# Apply strategy‑specific transformations (Olho cents -> cash, lot size, etc.)
+proc_df = preprocess_strategy_df(raw_df, selected_strategy)
+
+daily_df, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret = calculate_kpis(proc_df)
 
 # --- 7. MAIN FACTSHEET BODY ---
 col_title, col_actions = st.columns([2.5, 1])
@@ -222,8 +282,8 @@ with col_title:
 
 with col_actions:
     st.write("") 
-    # Action 1: Export CSV
-    csv_bytes = raw_df.to_csv(index=False).encode('utf-8')
+    # Action 1: Export CSV (export processed ledger so PNL is cash-consistent)
+    csv_bytes = proc_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="⬇️ Export Ledger (.csv)",
         data=csv_bytes,
