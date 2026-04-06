@@ -47,7 +47,6 @@ st.markdown("""
 INITIAL_INVESTMENT = 1_000_000.0
 ANNUAL_BENCHMARK_RATE = 0.10
 DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
-OLHO_POSITION_VALUE = 50_000.0  # BRL per trade for Olho
 
 # =====================
 # 3. DATA LOADING
@@ -79,14 +78,14 @@ def load_csv(filename: str) -> pd.DataFrame | None:
     return df.sort_values("Date").reset_index(drop=True)
 
 # =====================
-# 4. STRATEGY PREPROCESSING
-# =====================
-# =====================
 # 4. GENERIC PREPROCESSING (ALL STRATEGIES)
 # =====================
 
 def preprocess_all(df: pd.DataFrame) -> pd.DataFrame:
-    """All strategies: assume PNL is already in cash."""
+    """
+    All strategies:
+      - Assume PNL column already in cash (your Olho CSV is now converted).
+    """
     df = df.copy()
     if "PNL" not in df.columns:
         return df
@@ -259,12 +258,12 @@ if raw_df is None or raw_df.empty:
     )
     st.stop()
 
-proc_df = preprocess_by_strategy(raw_df, selected_strategy)
+proc_df = preprocess_all(raw_df)
 
 if proc_df is None or proc_df.empty:
     st.info(
         f"**System Notice:** After processing, there are no valid trades for `{selected_strategy}`. "
-        "Please check `PNL` and, for Olho, `Gatilho` columns.",
+        "Please check the `PNL` column.",
         icon="ℹ️",
     )
     st.stop()
