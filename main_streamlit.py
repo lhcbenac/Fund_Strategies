@@ -30,7 +30,7 @@ st.markdown("""
 
 # --- 2. GLOBAL CONSTANTS ---
 INITIAL_INVESTMENT = 1000000.0  
-ANNUAL_BENCHMARK_RATE = 0.10 # 10% Annual Benchmark (CDI Equivalent)
+ANNUAL_BENCHMARK_RATE = 0.10 # 10% Annual Benchmark
 DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
 
 # --- 3. CORE LOGIC & METRICS ---
@@ -130,7 +130,7 @@ def generate_bulletproof_matrix(daily_df: pd.DataFrame):
     pivot_table = pivot_table[list(months_map.values())]
     pivot_table['YTD'] = pivot_table.sum(axis=1)
     
-    # Format natively as strings to completely avoid Pandas Styler attribute errors
+    # Format natively as strings to avoid Pandas Styler attribute errors
     for col in pivot_table.columns:
         pivot_table[col] = pivot_table[col].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
         
@@ -150,7 +150,7 @@ STRATEGIES = {
         "type": "Intraday Market-Neutral Statistical Arbitrage",
         "audience": "Professional Investors",
         "fee": "2.00% p.a. | 20% > Benchmark",
-        "desc": "Quantitative Alpha - B3 is an institutional-grade, market-neutral statistical arbitrage strategy designed exclusively to exploit behavioral overreactions during the highly volatile market open. Moving away from traditional technical analysis or directional betting, this model relies entirely on Volatility-Adjusted Relative Extremes. The algorithm precisely isolates the overnight price action—the gap between the previous day's close and the current day's open—across the entire IBOV universe. It then divides this raw gap by each specific stock's 20-day historical standard deviation. This critical normalization process converts a simple percentage gap into a rigorous statistical Z-Score, allowing the engine to measure exactly how abnormal a morning gap is relative to that specific asset's historical behavioral baseline.\n\nAt exactly 9:30 AM, the algorithmic engine cross-sectionally ranks the analyzed universe based on these Z-Scores. It then constructs a perfectly balanced, market-neutral portfolio designed to act as a liquidity provider during early morning chaos. The system automatically executes long positions on the most severely suppressed gaps—fading morning retail panic—and simultaneously takes short positions on the most heavily inflated gaps, fading morning euphoria. By anchoring itself to both sides of the market evenly, the strategy entirely neutralizes broader market directional risk (Beta)."
+        "desc": "Quantitative Alpha - B3 is an institutional-grade, market-neutral statistical arbitrage framework engineered to exploit behavioral mispricings following the market open. To eliminate the execution paradox of trading during the unpredictable pre-market auction, this strategy employs a Delayed Execution Limit Engine.\n\nAt exactly 10:00 AM, the algorithm calculates the overnight price gap across the entire IBOV universe using the actual opening prices. It normalizes these gaps against a rolling 20-day historical volatility baseline to generate Volatility-Adjusted Z-Scores. The system then cross-sectionally ranks the universe, identifying the Top 5 most suppressed gaps (Morning Panic / Long Targets) and the Top 5 most inflated gaps (Morning Euphoria / Short Targets).\n\nRather than executing aggressive Market-On-Open orders, the system deploys opportunistic limit orders. For Long targets, it posts bids exactly 1.00% below the opening price. For Short targets, it posts offers exactly 1.00% above the opening price. The algorithm then waits. A trade is only executed if intraday volatility spikes enough to fill these favorable limit prices. If an asset simply drifts away without triggering the pullback, the system gracefully aborts the trade, preserving capital. Once a limit order is filled, the strategy captures intraday mean-reversion as the asset gravitates toward fair value, closing all positions rigidly by the end of the session."
     },
     "LAM Strategy": {
         "file": "lam_strategy_logbook.csv",
@@ -190,11 +190,33 @@ if raw_df is None:
 
 daily_df, total_ret, pct_bench, pos_months, neg_months, max_dd, max_m_ret, min_m_ret = calculate_kpis(raw_df)
 
-# HEADER
-st.markdown(f"<h1>{selected_strategy}</h1>", unsafe_allow_html=True)
-st.markdown(f"<h3 style='margin-top:-5px;'>{strat_meta['type']}</h3>", unsafe_allow_html=True)
+# HEADER & ACTION BUTTONS
+col_title, col_actions = st.columns([2, 1.5])
+with col_title:
+    st.markdown(f"<h1>{selected_strategy}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='margin-top:-5px;'>{strat_meta['type']}</h3>", unsafe_allow_html=True)
+with col_actions:
+    st.write("") # Spacing
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        st.download_button(
+            label="📄 Download Factsheet (PDF)",
+            data=b"Simulated PDF Content - Please generate via browser print to PDF", 
+            file_name=f"LAM_Capital_{selected_strategy.replace(' ', '_')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    with btn_col2:
+        csv_bytes = raw_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="⬇️ Download Logbook (.csv)",
+            data=csv_bytes,
+            file_name=expected_filename,
+            mime="text/csv",
+            use_container_width=True
+        )
 
-# SUMMARY TEXT (200-400 words)
+# SUMMARY TEXT
 paragraphs = strat_meta["desc"].split("\n\n")
 for p in paragraphs:
     st.markdown(f"<p>{p}</p>", unsafe_allow_html=True)
@@ -234,10 +256,8 @@ with col2:
         <tr><th>Inception Date</th><td>{start_date}</td></tr>
         <tr><th>Target Audience</th><td>{strat_meta['audience']}</td></tr>
         <tr><th>Fees</th><td>{strat_meta['fee']}</td></tr>
-        <tr><th>Redemption Liquidity</th><td>T+0 (Intraday) / T+2 (Swing)</td></tr>
+        <tr><th>Redemption Liquidity</th><td>T+30</td></tr>
         <tr><th>Initial Minimum Allocation</th><td>$ 1,000,000</td></tr>
-        <tr><th>Custodian</th><td>BTG Pactual</td></tr>
-        <tr><th>Auditor</th><td>KPMG</td></tr>
     </table>
     """, unsafe_allow_html=True)
 
