@@ -27,6 +27,8 @@ st.markdown("""
         .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.95rem; }
         .info-table th { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #86868b; font-weight: 500; width: 60%; }
         .info-table td { text-align: right; padding: 10px 8px; border-bottom: 1px solid #e5e5ea; color: #1d1d1f; font-weight: 600; }
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
         
         @media print {
             section[data-testid="stSidebar"] { display: none !important; }
@@ -76,14 +78,12 @@ def load_csv(filename: str) -> pd.DataFrame | None:
 # =====================
 
 def calculate_kpis(df: pd.DataFrame):
-    # Group PNL by normalized date
     daily = df.groupby(df["Date"].dt.normalize())["PNL"].sum().reset_index()
     daily["Date"] = pd.to_datetime(daily["Date"])
     daily["Cumulative_PNL"] = daily["PNL"].cumsum()
     daily["NAV"] = INITIAL_INVESTMENT + daily["Cumulative_PNL"]
     daily["Strat_Cum_Ret"] = (daily["Cumulative_PNL"] / INITIAL_INVESTMENT) * 100
     
-    # Bench calc
     days_range = np.arange(1, len(daily) + 1)
     daily["Bench_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days_range - 1) * 100
     
@@ -115,8 +115,10 @@ def generate_monthly_matrix(daily_df: pd.DataFrame):
     pivot = pivot[list(months_names.values())]
     pivot["YTD"] = pivot.sum(axis=1)
     
-    # Format and return styled table
-    return pivot.style.format("{:.2f}%", na_rep="-")
+    def format_pct(x):
+        return f"{x:.2f}%" if pd.notnull(x) else "-"
+        
+    return pivot.apply(lambda x: x.map(format_pct))
 
 # =====================
 # 5. STRATEGY METADATA
@@ -143,21 +145,21 @@ At exactly 10:00 AM, the algorithmic engine cross-sectionally ranks the analyzed
     },
     "LAM Strategy": {
         "file": "lam_strategy_logbook.csv",
-        "type": "Auto-Adaptive Multi-Model Swing Portfolio",
-        "audience": "Qualified Investors",
-        "fee": "2.00% p.a. | 20% > Benchmark",
-        "desc": """The flagship LAM Strategy is a highly advanced, auto-adaptive swing trading portfolio driven by a robust ensemble of seven distinct quantitative models. Designed to navigate and conquer complex, multi-day market cycles, the foundation of this strategy rests heavily on rigorous statistical mathematics rather than conventional charting. The primary engine utilizes the Hurst Exponent to continuously monitor and detect shifting market regimes—accurately distinguishing between trending (persistent) and mean-reverting (anti-persistent) environments. Concurrently, it applies Ornstein-Uhlenbeck processes to calculate mathematically optimal mean-reversion half-lives, dictating exactly how long a swing position should be held.
-
-Depending on the detected regime, the algorithmic framework dynamically rotates capital across its sub-strategies. These include models targeting extreme Volatility Compression (detecting quiet periods before explosive breakouts), Volume Climaxes (fading institutional exhaustion), adaptive Keltner Squeezes, and Anchored VWAP Divergences. Unlike our strictly intraday models, the LAM Strategy is designed to hold overnight exposure, capturing larger multi-day alpha. To mitigate the inherent risks of swing trading, the framework operates on a rigorous step-forward walking backtest architecture. Risk is managed asymmetrically via dynamic, volatility-adjusted Stop-Loss and Take-Profit brackets, alongside strict volume liquidity minimums to ensure seamless execution. Crucially, the engine features an institutional "Mirror Book" parameter. If macroeconomic headwinds dictate severe structural system decay, the algorithm can seamlessly invert its entire signal logic, allowing the portfolio to remain profitable even when traditional market conditions completely break down."""
-    },
-    "Swing Trade ATR": {
-        "file": "swing_atr_logbook.csv",
         "type": "Systematic Scale-In Portfolio Matrix",
         "audience": "Qualified Investors",
         "fee": "1.50% p.a. | 20% > Benchmark",
-        "desc": """The Swing Trade ATR framework is an institutional-grade, multi-tranche scale-in engine engineered to systematically build positions during extreme pricing anomalies. At its core, the strategy is predicated on the mathematical certainty of mean reversion, utilizing a 20-day Exponential Weighted Moving Average (EWMA) as the fundamental baseline for fair value. Rather than executing a single, rigid entry, the portfolio manager module deploys capital across five calculated tranches, scaling into positions as an asset deviates further from its baseline. 
+        "desc": """The flagship LAM Strategy is an institutional-grade, multi-tranche scale-in engine engineered to systematically build positions during extreme pricing anomalies. At its core, the strategy is predicated on the mathematical certainty of mean reversion, utilizing a 20-day Exponential Weighted Moving Average (EWMA) as the fundamental baseline for fair value. Rather than executing a single, rigid entry, the portfolio manager module deploys capital across five calculated tranches, scaling into positions as an asset deviates further from its baseline. 
 
-To ensure mathematical precision, these scale-in levels are strictly guarded by Average True Range (ATR) volatility bands. As an asset drops 2.0, 3.0, 4.5, 6.0, and ultimately 8.0 ATR multiples below its EWMA, the engine progressively increases its capital allocation weighting. However, to prevent the system from blindly catching "falling knives" during structural market crashes, the strategy employs a rolling 60-day Hurst exponent as an absolute regime filter. If the Hurst calculation indicates a persistent downward trend (a value greater than 0.55), the scale-in logic is instantly aborted. The exit mechanism is equally systematic: the entire aggregate position is closed the moment the asset's price reverts to the rolling EWMA baseline. By combining dynamic volatility mapping, strict maximum gross exposure limits, and advanced regime detection, the Swing Trade ATR strategy offers a mathematically sound approach to capturing aggressive reversion alpha while strictly defining downside risk parameters."""
+To ensure mathematical precision, these scale-in levels are strictly guarded by Average True Range (ATR) volatility bands. As an asset drops 2.0, 3.0, 4.5, 6.0, and ultimately 8.0 ATR multiples below its EWMA, the engine progressively increases its capital allocation weighting. However, to prevent the system from blindly catching "falling knives" during structural market crashes, the strategy employs a rolling 60-day Hurst exponent as an absolute regime filter. If the Hurst calculation indicates a persistent downward trend (a value greater than 0.55), the scale-in logic is instantly aborted. The exit mechanism is equally systematic: the entire aggregate position is closed the moment the asset's price reverts to the rolling EWMA baseline. By combining dynamic volatility mapping, strict maximum gross exposure limits, and advanced regime detection, the LAM Strategy offers a mathematically sound approach to capturing aggressive reversion alpha while strictly defining downside risk parameters."""
+    },
+    "Swing Trade": {
+        "file": "swing_trade_logbook.csv",
+        "type": "Auto-Adaptive Multi-Model Swing Portfolio",
+        "audience": "Qualified Investors",
+        "fee": "2.00% p.a. | 20% > Benchmark",
+        "desc": """The Swing Trade framework is a highly advanced, auto-adaptive portfolio driven by a robust ensemble of seven distinct quantitative models: Hurst_MR, OU_MR, Mom_Breakout, Vol_Climax, Vol_Compress, Keltner_Squeeze, and VWAP_Divergence. Designed to navigate and conquer complex, multi-day market cycles, the foundation of this strategy rests heavily on rigorous statistical mathematics. The primary engine utilizes the Hurst Exponent to continuously monitor and detect shifting market regimes—accurately distinguishing between trending (persistent) and mean-reverting (anti-persistent) environments.
+
+Operating primarily (over 90% of the time) under the Ornstein-Uhlenbeck Mean Reversion (OU_MR) model, it calculates mathematically optimal half-lives to dictate exactly how long a swing position should be held. Depending on the detected regime, the framework dynamically rotates capital across its sub-strategies to capture explosive breakouts or fade institutional exhaustion. Unlike our strictly intraday models, this Swing Trade portfolio is designed to hold overnight exposure, capturing larger multi-day alpha. Risk is managed asymmetrically via dynamic, volatility-adjusted Stop-Loss and Take-Profit brackets, alongside strict volume liquidity minimums. Crucially, the engine features an institutional "Mirror Book" parameter, allowing the algorithm to seamlessly invert its entire signal logic if macroeconomic headwinds dictate severe structural system decay."""
     },
 }
 
@@ -180,7 +182,7 @@ if raw_df is None:
 
 daily_df, total_ret, pct_bench, pos_m, neg_m, max_dd, max_m, min_m = calculate_kpis(raw_df)
 
-# Header
+# Header & Actions
 col_t, col_a = st.columns([2.5, 1])
 with col_t:
     st.markdown(f"<h1>{selected_strategy}</h1>", unsafe_allow_html=True)
@@ -204,9 +206,9 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 st.markdown("<h2>Monthly Return Matrix</h2>", unsafe_allow_html=True)
 st.dataframe(generate_monthly_matrix(daily_df), use_container_width=True)
 
-# Metrics
-col1, _, col2 = st.columns([1, 0.1, 1])
-with col1:
+# Footer Metrics
+c1, _, c2 = st.columns([1, 0.1, 1])
+with c1:
     st.markdown(f"""<h2>Risk & Performance Metrics</h2><table class="info-table">
         <tr><th>Return Since Inception</th><td>{total_ret:.2f}%</td></tr>
         <tr><th>Return (% Benchmark)</th><td>{pct_bench:.2f}%</td></tr>
@@ -214,7 +216,7 @@ with col1:
         <tr><th>Maximum Drawdown</th><td>{max_dd:.2f}%</td></tr>
     </table>""", unsafe_allow_html=True)
 
-with col2:
+with c2:
     st.markdown(f"""<h2>General Information</h2><table class="info-table">
         <tr><th>Inception Date</th><td>{daily_df["Date"].iloc[0].strftime("%B %d, %Y")}</td></tr>
         <tr><th>Fees</th><td>{strat_meta['fee']}</td></tr>
