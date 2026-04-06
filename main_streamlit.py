@@ -95,9 +95,8 @@ def preprocess_strategy_df(df: pd.DataFrame, strategy_name: str) -> pd.DataFrame
         return df
 
     if strategy_name == "Olho Diário":
-        # Optional: ensure there is a price column; adapt the name if needed.
-        # Here I assume a column named 'Price' (you can change to 'Close', 'Entry_Price', etc.).
-        price_col_candidates = ['Price', 'Close', 'Entry_Price', 'Loop_Price']
+        # Use Gatilho as entry price for lot size and PNL calc
+        price_col_candidates = ['Gatilho', 'Close_D0', 'Close']
         price_col = next((c for c in price_col_candidates if c in df.columns), None)
 
         if price_col is None:
