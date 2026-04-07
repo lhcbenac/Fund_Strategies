@@ -62,6 +62,7 @@ INITIAL_INVESTMENT = 1_000_000.0
 ANNUAL_BENCHMARK_RATE = 0.10
 DAILY_BENCHMARK_RATE = ANNUAL_BENCHMARK_RATE / 252
 TRADING_DAYS_YEAR = 252
+BOVA11_FILE = "bova11_benchmarket.csv"
 
 STRATEGIES = {
     "Olho Diário": {
@@ -110,26 +111,22 @@ Operating primarily (over 90% of the time) under the Ornstein-Uhlenbeck Mean Rev
 # 3. BULLETPROOF DATA ENGINE
 # ==========================================
 def clean_currency(x):
-    """Robust parser for messy PNL strings (handles R$, commas, dots, whitespace)"""
+    """Robust parser for messy PNL strings"""
     if pd.isna(x): return 0.0
     if isinstance(x, (int, float)): return float(x)
     
     x = str(x).strip()
-    # Handle Brazilian format (1.000,50 -> 1000.50) vs US format (1,000.50 -> 1000.50)
     if ',' in x and '.' in x:
-        if x.rfind(',') > x.rfind('.'): # Comma is decimal
+        if x.rfind(',') > x.rfind('.'):
             x = x.replace('.', '').replace(',', '.')
-        else: # Dot is decimal
+        else:
             x = x.replace(',', '')
     elif ',' in x:
         x = x.replace(',', '.')
     
-    # Strip everything except digits, minus sign, and period
     x = re.sub(r'[^\d\.-]', '', x)
-    try:
-        return float(x)
-    except ValueError:
-        return 0.0
+    try: return float(x)
+    except ValueError: return 0.0
 
 @st.cache_data
 def load_and_prepare_data(filename: str) -> pd.DataFrame | None:
@@ -138,7 +135,6 @@ def load_and_prepare_data(filename: str) -> pd.DataFrame | None:
         df = pd.read_csv(filename, sep=None, engine='python', encoding='utf-8-sig')
         df.columns = df.columns.str.strip()
         
-        # 1. Map Date
         date_candidates = ["Date", "Loop_Date", "Trade_Date", "date", "Entry_Date", "Exit_Date"]
         date_col = next((c for c in date_candidates if c in df.columns), None)
         if not date_col: return None
@@ -147,7 +143,6 @@ def load_and_prepare_data(filename: str) -> pd.DataFrame | None:
         df["Date"] = pd.to_datetime(df["Date"], dayfirst=False, errors="coerce")
         df = df.dropna(subset=["Date"])
         
-        # 2. Map PNL
         pnl_candidates = ["PNL", "PnL", "PnL_R$", "pnl", "lucro", "Profit"]
         pnl_col = next((c for c in pnl_candidates if c in df.columns), None)
         if not pnl_col: return None
@@ -160,59 +155,80 @@ def load_and_prepare_data(filename: str) -> pd.DataFrame | None:
         st.error(f"Engine Error loading {filename}: {e}")
         return None
 
-def process_kpis(df: pd.DataFrame):
-    """Calculates Institutional Grade Time-Series KPIs"""
-    # 1. Aggregate to Daily Timeline
+@st.cache_data
+def load_bova11_benchmark() -> pd.DataFrame | None:
+    if not os.path.exists(BOVA11_FILE): return None
+    try:
+        df = pd.read_csv(BOVA11_FILE, sep=None, engine='python')
+        df.columns = df.columns.str.strip()
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date']).sort_values('Date')
+        return df[['Date', 'Close']]
+    except:
+        return None
+
+def process_kpis(df: pd.DataFrame, bova_df: pd.DataFrame | None):
+    """Calculates Institutional Grade Time-Series KPIs including Benchmarks"""
     daily = df.groupby(df["Date"].dt.normalize())["PNL"].sum().reset_index()
     daily["Date"] = pd.to_datetime(daily["Date"])
     
-    # 2. Ensure continuous timeline (fill missing days with 0 PNL)
     full_idx = pd.date_range(start=daily['Date'].min(), end=daily['Date'].max(), freq='B')
     daily = daily.set_index('Date').reindex(full_idx, fill_value=0.0).rename_axis('Date').reset_index()
     
-    # 3. Core NAV Math
     daily["Cumulative_PNL"] = daily["PNL"].cumsum()
     daily["NAV"] = INITIAL_INVESTMENT + daily["Cumulative_PNL"]
     daily["Daily_Return"] = daily["NAV"].pct_change().fillna(0)
     daily["Strat_Cum_Ret"] = (daily["NAV"] / INITIAL_INVESTMENT - 1) * 100
     
-    # 4. Benchmark Math
+    # Baseline 1: Fixed Income
     days = np.arange(1, len(daily) + 1)
-    daily["Bench_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days - 1) * 100
+    daily["Fixed_Inc_Cum_Ret"] = ((1 + DAILY_BENCHMARK_RATE) ** days - 1) * 100
     
-    # 5. Advanced KPIs
+    # Baseline 2: BOVA11 MtM
+    daily["Bova_Cum_Ret"] = np.nan
+    if bova_df is not None and not bova_df.empty:
+        daily = pd.merge(daily, bova_df, on='Date', how='left')
+        daily['Close'] = daily['Close'].ffill().bfill() # Handle missing market days cleanly
+        initial_bova = daily['Close'].iloc[0]
+        if initial_bova > 0:
+            daily["Bova_Cum_Ret"] = (daily['Close'] / initial_bova - 1) * 100
+    
+    # Advanced KPIs
     total_ret = daily["Strat_Cum_Ret"].iloc[-1]
+    fixed_ret = daily["Fixed_Inc_Cum_Ret"].iloc[-1]
+    bova_ret = daily["Bova_Cum_Ret"].iloc[-1] if not pd.isna(daily["Bova_Cum_Ret"].iloc[-1]) else 0.0
     
-    # Annualized Math
     trading_days = len(daily)
     years = trading_days / TRADING_DAYS_YEAR if trading_days > 0 else 1
     ann_ret = ((daily["NAV"].iloc[-1] / INITIAL_INVESTMENT) ** (1 / years) - 1) * 100
     ann_vol = daily["Daily_Return"].std() * np.sqrt(TRADING_DAYS_YEAR) * 100
     
-    # Sharpe Ratio (Risk Free Rate approx 10%)
     rf_daily = ANNUAL_BENCHMARK_RATE / TRADING_DAYS_YEAR
     excess_returns = daily["Daily_Return"] - rf_daily
     sharpe = (excess_returns.mean() / daily["Daily_Return"].std()) * np.sqrt(TRADING_DAYS_YEAR) if daily["Daily_Return"].std() > 0 else 0
     
-    # Drawdown
     rolling_max = daily["NAV"].cummax()
     daily["Drawdown"] = ((daily["NAV"] - rolling_max) / rolling_max) * 100
     max_dd = daily["Drawdown"].min()
     
-    # Win Rate (Days)
     win_rate = (len(daily[daily["PNL"] > 0]) / len(daily[daily["PNL"] != 0])) * 100 if len(daily[daily["PNL"] != 0]) > 0 else 0
 
-    return daily, total_ret, ann_ret, ann_vol, sharpe, max_dd, win_rate
+    return daily, total_ret, ann_ret, ann_vol, sharpe, max_dd, win_rate, fixed_ret, bova_ret
 
 # ==========================================
 # 4. ADVANCED PLOTLY CHARTS
 # ==========================================
 def plot_master_evolution(daily: pd.DataFrame, strat_name: str):
-    """Creates a 2-panel Plotly chart (NAV Curve + Underwater Drawdown)"""
+    """Creates a 2-panel Plotly chart with all 3 Baselines"""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.75, 0.25])
     
-    # Top Panel: NAV
-    fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Bench_Cum_Ret"], name="Benchmark (10% a.a.)", line=dict(color="#9ca3af", width=2, dash="dot")), row=1, col=1)
+    # Top Panel: Benchmarks
+    fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Fixed_Inc_Cum_Ret"], name="Fixed Income (10% a.a.)", line=dict(color="#9ca3af", width=2, dash="dot")), row=1, col=1)
+    
+    if "Bova_Cum_Ret" in daily.columns and not daily["Bova_Cum_Ret"].isna().all():
+        fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Bova_Cum_Ret"], name="BOVA11 (Market)", line=dict(color="#d97706", width=2)), row=1, col=1)
+        
+    # Top Panel: Strategy
     fig.add_trace(go.Scatter(x=daily["Date"], y=daily["Strat_Cum_Ret"], name=strat_name, line=dict(color="#2563eb", width=2.5), fill="tonexty", fillcolor="rgba(37, 99, 235, 0.08)"), row=1, col=1)
     
     # Bottom Panel: Drawdown
@@ -229,7 +245,6 @@ def plot_master_evolution(daily: pd.DataFrame, strat_name: str):
     return fig
 
 def plot_monthly_heatmap(daily: pd.DataFrame):
-    """Creates a beautiful Plotly Heatmap instead of Pandas Styler"""
     df = daily.copy()
     df['Year'] = df['Date'].dt.year
     df['Month'] = df['Date'].dt.month
@@ -237,7 +252,6 @@ def plot_monthly_heatmap(daily: pd.DataFrame):
     pivot = (df.groupby(["Year", "Month"])["PNL"].sum() / INITIAL_INVESTMENT * 100).unstack()
     months_str = [calendar.month_name[i][:3] for i in range(1, 13)]
     
-    # Ensure all 12 months exist
     for i, m in enumerate(months_str):
         if (i+1) not in pivot.columns: pivot[i+1] = np.nan
     
@@ -245,12 +259,9 @@ def plot_monthly_heatmap(daily: pd.DataFrame):
     pivot.columns = months_str
     pivot["YTD"] = pivot.sum(axis=1)
     
-    # Prepare data for Plotly
     z_data = pivot.values
     y_data = pivot.index.astype(str).tolist()
     x_data = months_str + ["YTD"]
-    
-    # Text annotations
     text_data = [[f"{val:.2f}%" if not np.isnan(val) else "" for val in row] for row in z_data]
     
     fig = go.Figure(data=go.Heatmap(
@@ -267,7 +278,6 @@ def plot_monthly_heatmap(daily: pd.DataFrame):
     return fig
 
 def plot_distribution(daily: pd.DataFrame):
-    """Histogram of daily returns"""
     returns = daily[daily["Daily_Return"] != 0]["Daily_Return"] * 100
     fig = go.Figure(data=[go.Histogram(x=returns, nbinsx=50, marker_color="#3b82f6", opacity=0.8)])
     fig.update_layout(
@@ -296,8 +306,8 @@ if raw_df is None or raw_df.empty:
     st.info(f"**System Notice:** Expected file `{strat_meta['file']}` not found or invalid format. Please sync the data lake.", icon="ℹ️")
     st.stop()
 
-# Compute Math
-daily_df, tot_ret, ann_ret, ann_vol, sharpe, max_dd, win_rate = process_kpis(raw_df)
+bova_df = load_bova11_benchmark()
+daily_df, tot_ret, ann_ret, ann_vol, sharpe, max_dd, win_rate, fixed_ret, bova_ret = process_kpis(raw_df, bova_df)
 
 # Header
 col_t, col_a = st.columns([3, 1])
@@ -316,7 +326,7 @@ with col_a:
         </button>
     """, height=50)
 
-# Top Metric Cards (Custom HTML)
+# Top Metric Cards
 st.markdown(f"""
     <div class="metric-grid">
         <div class="metric-card">
@@ -361,11 +371,11 @@ with col_dist:
 # Info Tables
 c1, _, c2 = st.columns([1, 0.05, 1])
 with c1:
-    st.markdown("<h2>Risk Analytics</h2>", unsafe_allow_html=True)
+    st.markdown("<h2>Risk Analytics & Alpha</h2>", unsafe_allow_html=True)
     st.markdown(f"""<table class="info-table">
+        <tr><th>Alpha vs BOVA11 (Market)</th><td class="{'pos-val' if (tot_ret - bova_ret) > 0 else 'neg-val'}">{(tot_ret - bova_ret):+.2f}%</td></tr>
+        <tr><th>Alpha vs Fixed Income (10% a.a.)</th><td class="{'pos-val' if (tot_ret - fixed_ret) > 0 else 'neg-val'}">{(tot_ret - fixed_ret):+.2f}%</td></tr>
         <tr><th>Annualized Volatility</th><td>{ann_vol:.2f}%</td></tr>
-        <tr><th>Risk-Free Rate (Assumption)</th><td>{ANNUAL_BENCHMARK_RATE*100:.1f}% a.a.</td></tr>
-        <tr><th>Worst Drawdown</th><td class="neg-val">{max_dd:.2f}%</td></tr>
         <tr><th>Trading Days Active</th><td>{len(daily_df[daily_df["Daily_Return"] != 0])}</td></tr>
     </table>""", unsafe_allow_html=True)
 
